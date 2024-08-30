@@ -20,6 +20,7 @@ class Config:
         # Set default properties
         self.args = Arguments(APP=self.APP).get_args()
         self.logger = logging.getLogger(f"{self.APP['name']}")
+        # self.logger = logging.getLogger(__name__)
         self.verbose = False
         self.working_dir = None
         self.output_filename = None
@@ -61,7 +62,8 @@ class Config:
                     raise FileNotFoundError(f"Input directory does not exist: '{in_file}'")
                 self.mkv_dirname = os.path.realpath(f'{in_file}')
             elif ext not in self.INFILE_ALLOWED_EXTENSIONS.keys():
-                    raise ValueError(f"Invalid file extension: '{ext}'. Allowed extensions: {', '.join(f"'{item}'" for item in self.INFILE_ALLOWED_EXTENSIONS.keys())}")
+                    allowed_exts = ', '.join(f"'{item}'" for item in self.INFILE_ALLOWED_EXTENSIONS.keys())
+                    raise ValueError(f"Invalid file extension: '{ext}'. Allowed extensions: {allowed_exts}")
             else:
                 if not os.path.exists(in_file):
                     raise FileNotFoundError(f"Input file does not exist: '{in_file}'")

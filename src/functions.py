@@ -1,4 +1,14 @@
 import sys
+import shutil
+
+def find_binary_in_path(binary_name):
+    # Find the binary in the PATH
+    binary_path = shutil.which(binary_name)
+    if not binary_path:
+        # raise ValueError(f"'{binary_name}' Was not found in PATH")
+        return None
+    return binary_path
+        
 
 def print_progress_bar(iteration, total, bar_length=40):
     # Calculate progress
@@ -24,3 +34,6 @@ def convert_to_srt_time(time_str, frame_rate=25):
     srt_time = f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
 
     return srt_time
+
+class ConverterError(Exception):
+    pass
