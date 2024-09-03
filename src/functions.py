@@ -1,4 +1,5 @@
 import sys
+import os
 import shutil
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
@@ -11,7 +12,9 @@ def find_binary_in_path(binary_name):
         # raise ValueError(f"'{binary_name}' Was not found in PATH")
         return None
     return binary_path
-        
+
+def is_directory_writable(directory_path):
+    return os.access(directory_path, os.W_OK)
 
 def print_progress_bar(iteration, total, bar_length=40):
     # Calculate progress

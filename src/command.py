@@ -4,7 +4,10 @@ import os
 from exceptions import SubProcessError
 
 class RunCommand:
-
+    # Get the current environment variables
+    ENV = os.environ.copy()
+    if 'RUN_IN_DOCKER' in ENV:
+        ENV['LD_LIBRARY_PATH'] = '/usr/lib:/usr/local/lib:/lib/x86_64-linux-gnu/'
 
     def run_command_return_output(self, command: list):
         """
@@ -26,7 +29,8 @@ class RunCommand:
                 stdout=subprocess.PIPE,  # Capture standard output
                 stderr=subprocess.PIPE,  # Capture standard error
                 text=True,               # Treat output as text
-                check=True               # Raise an exception if the command fails
+                check=True,              # Raise an exception if the command fails
+                env=self.ENV
             )
 
             # Return the command's return code, stdout, and stderr
@@ -73,7 +77,8 @@ class RunCommand:
             stdout=subprocess.PIPE, 
             stderr=subprocess.STDOUT,  # Redirect stderr to stdout
             text=True,  # Handle output as text
-            bufsize=1   # Line-buffered output
+            bufsize=1,   # Line-buffered output
+            env=self.ENV
         )
 
         # ANSI escape sequences for cursor control

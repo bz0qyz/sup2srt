@@ -2,7 +2,7 @@ import os
 import sys
 import tempfile
 import logging
-from functions import get_language
+from functions import get_language, is_directory_writable
 from arguments import Arguments
 from job_queue import jobQueue
 from exceptions import ArgumentError
@@ -32,7 +32,12 @@ class Config:
         self.queue = jobQueue()
         self.input_file = None
         self.input_type = None
+        self.uid = None
+        self.gid = None
         self.__init_args__(self.args)
+
+        if not is_directory_writable(f"{self.output_path}"):
+            raise ArgumentError(f"Output directory is not writable by uid: {os.getuid()} ")
 
     def __logging__(self, verbose=False):
         # Configure logging

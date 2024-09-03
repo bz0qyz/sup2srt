@@ -60,7 +60,7 @@ class SubFileProcessor:
         # Parse the XML SUB file contents
         for subtitle in root.findall('Events'):
             total_subtitles = len(subtitle) if not ittr_limit else ittr_limit
-            self.logger.info(f"OCR Processing {total_subtitles} subtitles")
+            self.logger.info(f"OCR Scanning {total_subtitles} subtitles")
 
             for event in subtitle.findall('Event'):
                 ittr += 1

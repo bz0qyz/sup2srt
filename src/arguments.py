@@ -25,6 +25,8 @@ class Arguments:
                             help="The full path to the import file. This can be a SUP, XML, MKV file, or a directory containing the MKV file.")
         parser.add_argument('-o', '--out', metavar='/Videos/subtitles', default=None,
                             help="The full path to save the generated SRT file(s). Default uses the path of the input file or directory.")
+        parser.add_argument('-u', '--uid', default=None, help="When running in docker, set the output file ownership to this uid.")
+        parser.add_argument('-g', '--gid', default=None, help="When running in docker, set the output file ownership to this gid.")            
         parser.add_argument('-t', '--tmpdir', metavar='/tmp', default=f'{tempfile.gettempdir()}',
                             help="The temp path/working directory")
         parser.add_argument('--bdsup2sub-jar', metavar='/opt/BDSup2Sub.jar', default=None,

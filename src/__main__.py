@@ -63,5 +63,11 @@ if __name__=="__main__":
             working_dir=config.working_dir.name,
         )
 
+    # If a uid and or gid was specified, change the ownership of the out files
+    if config.uid:
+        config.gid = config.uid if not config.gid else config.gid
+        for file in os.listdir(config.output_path):
+            if file.lower().endswith('.sup') or file.lower().endswith('.srt'):
+                os.chown(os.path.join(config.output_path, file), uid=int(config.uid), gid=int(config.gid))
     sys.exit(0)
 
