@@ -1,45 +1,99 @@
 import os
+import re
 import logging
 import subprocess
 import sqlite3
-from functions import find_binary_in_path, ConverterError
+
+from functions import find_binary_in_path, get_language
+from command import RunCommand
+from job_queue import QueueItem
+from exceptions import MissingDependencyError, MkvExportError
 
 class supTrackExporter:
-    def __init__(self, mkv_path, logger):
+    def __init__(self, queue, next_queue, mode, working_dir, language, logger):
         self.logger = logger
-        self.mkv_path = mkv_path
-        self.mkvfilename = None
+        self.working_dir = f"{os.path.join(working_dir, 'tracks')}"
+        self.queue = queue
+        self.next_queue = next_queue
+        self.mode = mode
+        self.language = language
         self.mkvinfo_bin = find_binary_in_path('mkvinfo')
         self.mkvextract_bin = find_binary_in_path('mkvextract')
-        self.table_name = 'track'
+        self.cmd = RunCommand()
 
         self.field_map = {
-            "start": "Track number:",
+            "start_tracks": r'^\|\+ Tracks$',
+            "start_track": r'^\|.*Track$',
             "fields": {
-                "Track type:": ["subtitles"],
-                "Codec ID:": ["S_HDMV/PGS", "S_VOBSUB"],
-                "Language:": ["eng"]
+                'Track number:': [],
+                'Track type:': ['subtitles'],
+                'Codec ID:': ['S_HDMV/PGS'],
+                'Language:': [],
+                '"Default track" flag:': ['0', '1']
             },
-            "end": "Language:"
+            "end_track": r'^\| \+ EBML void:.*$'
         }
 
         if not self.mkvinfo_bin:
-            raise ConverterError(f"'mkvinfo' binary was not found in PATH")
+            raise MissingDependencyError(f"'mkvinfo' binary was not found in PATH")
 
         if not self.mkvextract_bin:
-            raise ConverterError(f"'mkviextract' binary was not found in PATH")
+            raise MissingDependencyError(f"'mkviextract' binary was not found in PATH")
 
-        if not os.path.isdir(mkv_path):
-            self.mkv_filename = mkv_path
+        # create the working directory
+        if not os.path.isdir(self.working_dir):
+            os.makedirs(self.working_dir)
 
-    def __initdb__(self):
-        self.db_con = sqlite3.connect(self.db_file)
-        self.db = self.db_con.cursor()
-        self.db.execute(f"CREATE TABLE {self.table_name}(id, type, lang, filename, codec)")
+        # Get valid language codes
+        for code in self.language:
+            lang = get_language(code)
+            for prop in ['pt1', 'pt2b']:
+                prop_code = getattr(lang, prop)
+                if prop_code not in self.field_map['fields']['Language:']:
+                    self.logger.info(f"Adding language: {lang.name} ({prop_code}) to track filter")
+                    self.field_map['fields']['Language:'].append(prop_code)
 
-    def prompt_user_to_select(self, options):
+        while not self.queue.empty():
+            job_item = self.queue.get()
+            
+            if os.path.isdir(f"{job_item}"):
+                # This is a directory we need to find the mkv file(s)
+                self.logger.debug("Directory passed in.")
+                mkv_dir = job_item.input_file
+                mkv_files = [f for f in os.listdir(job_item.input_file) if f.lower().endswith('.mkv')]
+                if len(mkv_files) == 0:
+                    raise ConverterError(f"No mkv files found in {job_item}")
+                elif len(mkv_files) > 1:
+                    # Prompt the user to select one of the found files
+                    job_item.input_file = self.prompt_user_to_select(
+                        mkv_files,
+                        header="- Multiple MKV Files found -"
+                        )
+                
+                else:
+                    job_item.input_file = f"{mkv_files[0]}"
+            
+                # append the input_path to the infout file
+                job_item.input_file = os.path.join(mkv_dir, job_item.input_file)
+                # self.queue.task_done()
+                # continue
+
+            # execute the export job
+            out_files = self.export(job_item)
+
+            self.logger.info(f"Finished exporting tracks from '{job_item}'")
+            self.queue.task_done()
+            # Add the jobs to the next queue
+            for out_file in out_files:
+                self.next_queue.put(QueueItem(input_file=out_file, output_path=job_item.output_path))
+
+
+    def prompt_user_to_select(self, options, header=None):
         # Display the options to the user
-        print("\n\nPlease select an option:")
+        print("\n\n")
+        if header:
+            print(header)
+        print("Please select an option:")
         for i, option in enumerate(options, start=1):
             if isinstance(option, str):
                 print(f"{i}. {option}")
@@ -47,7 +101,7 @@ class supTrackExporter:
         # Prompt the user for a selection
         while True:
             try:
-                choice = int(input("Enter the number of your choice: "))
+                choice = int(input("\nEnter the number of your choice: "))
                 if 1 <= choice <= len(options):
                     return options[choice - 1]
                 else:
@@ -60,100 +114,111 @@ class supTrackExporter:
         if ":" not in line:
             return None
         parts = line.split(':')
-        return {parts.pop(0): ': '.join(parts)}
+        return {parts.pop(0): ': '.join(parts).strip()}
 
-    def export(self, working_dir, language='en'):
-        self.working_dir = f"{working_dir}/tracks"
-        self.sup_filename = f"{self.working_dir}/subtitles.sup"
-        self.db_file = f"{self.working_dir}/tracks.db"
+
+    def export(self, job_item):
+        self.sup_filename = f"{os.path.join(self.working_dir, 'subtitles.sup')}"
+        self.logger.info(f"Extracting subtitle tracks from '{os.path.basename(job_item.input_file)}'")
+        self.logger.info(f"Filtering tracks by language(s): {', '.join(self.language)}")
+
         
-        if not self.mkvfilename:
-            self.logger.debug("Directory passed in.")
-            mkv_files = [f for f in os.listdir(self.mkv_path ) if f.endswith('.mkv')]
-            mkv_files_full_path = [os.path.join(self.mkv_path , f) for f in mkv_files]
-            print(os.listdir(self.mkv_path))
-            print(mkv_files)
-            print(mkv_files_full_path)
+        # Run mkvinfo to get all the subtitle tracks
+        return_code, mkvinfo_result, return_error = self.cmd.run_command_return_output(
+            command=[self.mkvinfo_bin, f"{job_item.input_file}"]
+        )
 
-            if len(mkv_files_full_path) == 0:
-                raise ConverterError(f"No mkv files found in {self.mkv_path}")
-            elif len(mkv_files_full_path) > 1:
-                self.mkv_filename = self.prompt_user_to_select(mkv_files_full_path)
-            else:
-                self.mkv_filename = f"{mkv_files_full_path[0]}"
+        if return_code > 0:
+            raise MkvExportError(f"{mkvinfo_result} {return_error}")
+        # print(mkvinfo_result)
 
-        if not os.path.isdir(self.working_dir):
-            os.makedirs(self.working_dir)
-
-        self.logger.info(f"Extracting subtitle tracks from {self.mkv_filename}")
-        
-        mkvinfo_result = subprocess.run([self.mkvinfo_bin, f"{self.mkv_filename}"], capture_output=True, text=True)
-        # from pprint import pprint
-        # pprint(mkvinfo_result.stdout)
-
-        if not mkvinfo_result:
-            return None
-        
-        self.__initdb__()
-
+        in_tracks = False
         in_track = False
-        for line in mkvinfo_result.stdout.splitlines():
-            line_dict = self.line_to_dict(line)
-            if not line_dict:
+        subtitle_tracks = []
+        subtitle_track = {}
+        # Loop the results of mkvinfo and
+        # extract the subtitle tracks with the specified language
+        for line in mkvinfo_result.splitlines():
+            # Detect the beginning of the tracks section
+            if re.fullmatch(self.field_map['start_tracks'], line.strip()):
+                in_tracks = True
                 continue
 
+            if not in_tracks:
+                continue        
+
             # Detect the beginning of a track
-            if self.field_map['start'] in line:
-                track_info = line_dict
+            if re.fullmatch(self.field_map['start_track'], line.strip()):
                 in_track = True
+                subtitle_track = {}
+                continue
+
+            # Detect the end of a track
+            if re.fullmatch(self.field_map['end_track'], line.strip()) and in_track:
+                in_track = False
+                if len(subtitle_track) > 0:
+                    # create the track object
+                    track = mkvTrack(track_info=subtitle_track, mkv_filename=job_item.input_file)
+                    self.logger.debug(f"Saving track: {track.filename}")
+                    subtitle_tracks.append(track)
+                continue
 
             # Set all the track fields
             if in_track:
+                line_dict = self.line_to_dict(line)
                 for field, values in self.field_map['fields'].items():
                     if field not in line:
                         continue
                     else:
-                        for value in values:
-                            if value in line:
-                                track_info.update(line_dict)
+                        if len(values) > 0:
+                            # make sure the value is allowed
+                            for value in values:
+                                if value in line:
+                                    subtitle_track.update(line_dict)
+                        else:
+                            # an empty list means any value is accepted
+                            subtitle_track.update(line_dict)
+         
+        self.logger.info(f"Found {len(subtitle_tracks)} subtitle track(s) to extract.")
+        if self.mode == 'first':
+            self.logger.info("Exporting only the first track in order.")
 
-            # Detect the end of a track
-            if self.field_map['end'] in line:
-                in_track = False
-                if "Track type" in track_info.keys():
-                    track = mkvTrack(track_info=track_info, mkv_filename=self.mkv_filename, table_name=self.table_name)
-                    self.logger.debug(f"Saving track: {track.filename}")
-                    self.db.execute(track.insert)
+        sup_filenames = []
+        for track in subtitle_tracks:
+            self.logger.info(f"Extracting Track: id:{track.id}, default: {track.default}, language:{track.language}, codec: {track.codec} file:'{track.filename}'")
+            # execute mkvextract to get extract the subtitle tracks
+            sup_filename = f'{os.path.join(job_item.output_path, track.filename)}'
+            cmd = [
+                self.mkvextract_bin,
+                'tracks',
+                f'{job_item.input_file}',
+                f'{track.id}:{sup_filename}'
+            ]
+            self.cmd.run_command_with_scroll_window(cmd, header=[f"mkvextract: extracting subtitle track: {track.id}"])
+            sup_filenames.append(sup_filename)
+            if self.mode == 'first':
+                break
 
-        if self.db_con:            
-            self.db_con.commit()
-            res = self.db.execute(f"SELECT * FROM {self.table_name} WHERE type='subtitles'")
-            print(res.fetchall())
-            # prompt_user_to_select()
-
-        if self.db_con:
-            self.db_con.close()
-
-        return None
-        return self.sup_filename
+        return sup_filenames
 
 class mkvTrack:
     CODEC_MAP = {
         "S_HDMV/PGS": "sup",
-        "S_VOBSUB": "srt"
+        "S_VOBSUB": "sub"
     }
     FUNC_MAP = {
         "Track number": "__set_track_id__",
         "Codec ID": "__set_codec_ext__",
-        "Track type": "__set_track_type__"
+        "Track type": "__set_track_type__",
+        '"Default track" flag': "__set_default__"
     }
 
-    def __init__(self, track_info, mkv_filename, table_name):
+    def __init__(self, track_info, mkv_filename):
         self.mkv_filename = os.path.basename(mkv_filename)
-        self.table_name = table_name
         self.type = None
         self.id = None
         self.language = None
+        self.default = None
         self.codec = None
         self.ext = "ukn"
         
@@ -173,15 +238,14 @@ class mkvTrack:
     def ending(self):
         return f"{self.language}.{self.ext}"
 
-    @property
-    def insert(self):
-        return f"INSERT INTO {self.table_name} VALUES('{self.id}', '{self.type}', '{self.language}', '{self.filename}', '{self.codec}')"
-
     def __set_track_filename__(self):
-        return f"{self.mkv_filename.replace('mkv', f't{self.id}.{self.ending}')}"
+        extra = ".default." if self.default else ""
+            
+        return f"{self.mkv_filename.replace('mkv', f'{extra}t{self.id}.{self.ending}')}"
 
     def __set_track_id__(self, field, value):
         # See if there is an ID for mkvextract
+        print(f"'{field}' = '{value}'")
         mkey = "mkvextract:"
         if mkey in value:
             value_parts = value.split(mkey)
@@ -194,3 +258,6 @@ class mkvTrack:
 
     def __set_track_type__(self, field, value):
         self.type = value
+
+    def __set_default__(self, field, value):
+        self.default = True if int(value) == 1 else False

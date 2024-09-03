@@ -29,7 +29,7 @@ ENV APP_UID 1001
 
 ENV OUT_VOLUME "${HOME_DIR}/output"
 ENV BDSUP2SUB "${HOME_DIR}/bin/BDSup2Sub.jar"
-ENV SUB2SRT "${HOME_DIR}/bin/sup2srt"
+ENV SUP2SRT "${HOME_DIR}/bin/sup2srt"
 ENV DEBIAN_FRONTEND noninteractive
 
 RUN set -e; \
@@ -56,10 +56,10 @@ RUN set -e; \
   [ -e "${BDSUP2SUB}" ] && java -jar "${BDSUP2SUB}" --version; \
   chown -R ${APP_USER}:${APP_USER} "${HOME_DIR}";
 
-COPY --from=builder --chown=${APP_USER}:${APP_USER} "/tmp/sup2srt/dist/sup2srt" "${SUB2SRT}"
+COPY --from=builder --chown=${APP_USER}:${APP_USER} "/tmp/sup2srt/dist/sup2srt" "${SUP2SRT}"
 
 WORKDIR ${HOME_DIR}
 USER ${APP_USER}
 VOLUME ${OUT_VOLUME}
 
-CMD ["${SUB2SRT}", "-h"]
+CMD ["${SUP2SRT}", "-h"]

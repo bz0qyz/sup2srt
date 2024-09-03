@@ -3,56 +3,65 @@ import os
 import logging
 from pprint import pprint
 from config import Config
+from job_queue import QueueItem
 from mkv import supTrackExporter
 from sup import supFileConverter
 from sub import SubFileProcessor
 
 # Main entry point
 if __name__=="__main__":
-    # try:
-    config = Config()
-    logger = config.logger
-    pprint(config.__dict__)
-    # except Exception as e:
-        # print(f"[FATAL ERROR]: {e}")
-        # sys.exit(1)
+    try:
+        config = Config()
+        logger = config.logger
+        queue = config.queue
+    except Exception as e:
+        print(f"[FATAL ERROR]: {e}")
+        sys.exit(1)
 
-    # Process each input type as needed
-    if config.mkv_dirname or config.mkv_filename:
-        if config.mkv_filename:
-            logger.info(f"MKV file detected: {config.mkv_filename}")
-            mkv_path = config.mkv_filename
-        else:
-            logger.info(f"MKV directory detected: {config.mkv_dirname}")
-            mkv_path = config.mkv_dirname
+    # print(config.__dict__)
+    # exit()
 
+    # load the first jou into the appropriate queue
+    config.logger.debug(f"Loading {config.input_type} queue with the start job.")
+    init_queue = getattr(config.queue, config.input_type)
+    init_queue.put(
+            QueueItem(
+                input_file=config.input_file,
+                output_path=config.output_path
+            )
+        )
+
+    # export tracks from MKV file(s) to SUP
+    if not config.queue.mkv.empty():
         config.sup_filename = supTrackExporter(
-            logger = logger,
-            mkv_path=mkv_path
-            ).export(working_dir=config.working_dir.name)
-
-    if config.sup_filename:
-        logger.info(f"SUP file detected: '{config.sup_filename}'")
-        config.sub_filename = supFileConverter(
-            logger = logger,
-            bdsup2sub_jar=config.bdsup2sub_jar,
-            sup_filename=config.sup_filename
-            ).convert(config.working_dir.name)
-
-    if config.sub_filename:
-        logger.info(f"SUB file detected: '{config.sub_filename}'")
-        config.outfile = SubFileProcessor(
-            logger = logger,
-            in_file=config.sub_filename,
-            out_file=config.output_filename
-        ).process(
+            queue=config.queue.mkv,
+            next_queue=config.queue.sup,
+            mode=config.mode,
             working_dir=config.working_dir.name,
-            limit=config.limit,
-            progress=config.progress,
-            overwrite=config.force
+            language=config.language,
+            logger = logger
+        )
+
+    # Convert SUP file(s) to SUB
+    if not config.queue.sup.empty():
+        config.sub_filename = supFileConverter(
+            queue=config.queue.sup,
+            next_queue=config.queue.sub,
+            bdsup2sub_jar=config.bdsup2sub_jar,
+            working_dir=config.working_dir.name,
+            logger = logger
             )
 
-        if not config.outfile:
-            sys.exit(1)
-        sys.exit(0)
+    # Convert SUB File(s) to SRT
+    if not config.queue.sub.empty():
+        config.outfile = SubFileProcessor(
+            queue=config.queue.sub,
+            logger = logger,
+            limit=config.limit,
+            progress=config.progress,
+            overwrite=config.force,
+            working_dir=config.working_dir.name,
+        )
+
+    sys.exit(0)
 

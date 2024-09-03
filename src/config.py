@@ -2,32 +2,36 @@ import os
 import sys
 import tempfile
 import logging
+from functions import get_language
 from arguments import Arguments
+from job_queue import jobQueue
+from exceptions import ArgumentError
 
 class Config:
     APP = {
-        "name": "sub2srt",
-        "description": "sub to srt subtitle converter",
-        "version": "1.0.0"
+        "name": "sup2srt",
+        "description": "MKV SUP to SRT subtitle converter",
+        "version": "1.0.0",
+        "tagline": "full-service subtitle extraction and conversion"
     }
     INFILE_ALLOWED_EXTENSIONS = {
-        'xml': {'description': 'SUB XML Subtitle File', 'property': 'sub_filename'},
-        'sup': {'description': 'Blu-ray Subtitle File', 'property': 'sup_filename'},
-        'mkv': {'description': 'Matroska Video File', 'property': 'mkv_filename'}
+        'xml': {'queue': 'sub', 'description': 'SUB: XML Subtitle Files'},
+        'sup': {'queue': 'sup', 'description': 'SUP: Blu-ray Subtitle File'},
+        'mkv': {'queue': 'mkv', 'description': 'MKV: Matroska Video File'}
     }
 
     def __init__(self):
         # Set default properties
         self.args = Arguments(APP=self.APP).get_args()
         self.logger = logging.getLogger(f"{self.APP['name']}")
-        # self.logger = logging.getLogger(__name__)
         self.verbose = False
         self.working_dir = None
-        self.output_filename = None
-        self.mkv_dirname = None
-        self.mkv_filename = None
-        self.sup_filename = None
-        self.sub_filename = None
+        self.output_path = None
+        # Supported language is currently only English
+        self.language = ['eng']
+        self.queue = jobQueue()
+        self.input_file = None
+        self.input_type = None
         self.__init_args__(self.args)
 
     def __logging__(self, verbose=False):
@@ -49,27 +53,38 @@ class Config:
 
         self.__logging__(self.verbose)
 
+        # Verify languages are valid
+        if self.language:
+            for code in self.language:
+               get_language(code)
+
         # set the working directory
         self.working_dir = tempfile.TemporaryDirectory(prefix=f"{self.APP['name']}-", dir=args.tmpdir)
+        
+        # get the input path or filename
         in_file = os.path.realpath(getattr(args, 'in', None))
-        out_file = os.path.realpath(getattr(args, 'out', None))
-
-        if in_file:
+        
+        if os.path.isdir(in_file):
+            # if the in_file is a directory it will be treated as an MKV path
+            if not os.path.exists(in_file):
+                raise FileNotFoundError(f"Input directory does not exist: '{in_file}'")
+            self.input_file = in_file
+            self.input_type = self.INFILE_ALLOWED_EXTENSIONS['mkv']['queue']
+        else:
             # get the file extension
             ext = os.path.splitext(in_file.lower())[-1].replace('.', '')
-            if os.path.isdir(in_file):
-                if not os.path.exists(in_file):
-                    raise FileNotFoundError(f"Input directory does not exist: '{in_file}'")
-                self.mkv_dirname = os.path.realpath(f'{in_file}')
-            elif ext not in self.INFILE_ALLOWED_EXTENSIONS.keys():
-                    allowed_exts = ', '.join(f"'{item}'" for item in self.INFILE_ALLOWED_EXTENSIONS.keys())
-                    raise ValueError(f"Invalid file extension: '{ext}'. Allowed extensions: {allowed_exts}")
+            if ext not in self.INFILE_ALLOWED_EXTENSIONS.keys():
+                allowed_exts = ', '.join(f"'{item}'" for item in self.INFILE_ALLOWED_EXTENSIONS.keys())
+                raise ValueError(f"Invalid file extension: '{ext}'. Allowed extensions: {allowed_exts}")
             else:
                 if not os.path.exists(in_file):
                     raise FileNotFoundError(f"Input file does not exist: '{in_file}'")
                 elif os.stat(in_file).st_size == 0:
                     raise ValueError(f"Invalid input file:  '{in_file}' is zero bytes in size.")
-                setattr(self, self.INFILE_ALLOWED_EXTENSIONS[ext]['property'], in_file)
+            self.input_file = in_file
+            self.input_type = self.INFILE_ALLOWED_EXTENSIONS[ext]['queue']
 
-        if out_file:
-            self.output_filename = os.path.realpath(f'{out_file}')
+        # Set the output path
+        out_dir = os.path.realpath(getattr(args, 'out')) if args.out else in_file
+        self.output_path = out_dir if os.path.isdir(out_dir) else os.path.dirname(out_dir)
+

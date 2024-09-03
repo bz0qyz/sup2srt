@@ -1,5 +1,8 @@
 import sys
 import shutil
+from iso639 import Lang
+from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
+from exceptions import ArgumentError
 
 def find_binary_in_path(binary_name):
     # Find the binary in the PATH
@@ -35,5 +38,12 @@ def convert_to_srt_time(time_str, frame_rate=25):
 
     return srt_time
 
-class ConverterError(Exception):
-    pass
+
+def get_language(code):
+    try:
+        return Lang(code)
+    except DeprecatedLanguageValue:
+        return Lang(e.change_to)
+
+    except InvalidLanguageValue:
+        raise ArgumentError(f"Invalid language code specified: '{code}'")
